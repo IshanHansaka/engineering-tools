@@ -53,15 +53,16 @@ public isolated function completeSyncJob(int jobId, string status, int reposSync
 # Idempotent for the same day via ON DUPLICATE KEY UPDATE on the `snapshot_date` unique keys.
 #
 # + trackedRepoId - `tracked_repositories.id`
+# + snapshotDate - The UTC date ("YYYY-MM-DD") to record this snapshot under
 # + repoData - Repo-level snapshot values
 # + assets - Asset-level snapshot values (already prefix-filtered)
 # + return - An error if any write fails (rolls back the transaction)
-public isolated function writeRepoSnapshot(int trackedRepoId, RepoSnapshotData repoData,
+public isolated function writeRepoSnapshot(int trackedRepoId, string snapshotDate, RepoSnapshotData repoData,
         AssetSnapshotData[] assets) returns error? {
     transaction {
-        _ = check databaseClient->execute(repositorySnapshotUpsertQuery(trackedRepoId, repoData));
+        _ = check databaseClient->execute(repositorySnapshotUpsertQuery(trackedRepoId, snapshotDate, repoData));
         foreach AssetSnapshotData asset in assets {
-            _ = check databaseClient->execute(assetSnapshotUpsertQuery(trackedRepoId, asset));
+            _ = check databaseClient->execute(assetSnapshotUpsertQuery(trackedRepoId, snapshotDate, asset));
         }
         check commit;
     }

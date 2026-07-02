@@ -89,12 +89,15 @@ isolated function syncRepository(database:TrackedRepository repo) returns error?
     entity:Repository repository = check entity:getRepository(org, name);
     entity:Release[] releases = check entity:getAllReleases(org, name);
 
+    // Single source of truth for "today" — used both to pick today's clone-traffic
+    // record and as the snapshot_date written below, so the two never drift apart.
+    string today = currentUtcDate();
+
     // Soft dependency: clone traffic needs Administration:read; store 0 if unavailable.
     int cloneCount = 0;
     int cloneUniques = 0;
     entity:ClonesTraffic|error clones = entity:getClonesTraffic(org, name);
     if clones is entity:ClonesTraffic {
-        string today = currentUtcDate();
         foreach entity:CloneRecord cloneRecord in clones.clones {
             if cloneRecord.timestamp.startsWith(today) {
                 cloneCount = cloneRecord.count;
@@ -135,7 +138,7 @@ isolated function syncRepository(database:TrackedRepository repo) returns error?
         cloneCount,
         cloneUniques
     };
-    check database:writeRepoSnapshot(repo.id, repoData, assetSnapshots);
+    check database:writeRepoSnapshot(repo.id, today, repoData, assetSnapshots);
 }
 
 # True if the asset name matches the prefix filter. An empty prefix list means "include all".

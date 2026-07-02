@@ -13,7 +13,6 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-import ballerinax/java.jdbc;
 import ballerinax/mysql;
 import ballerinax/mysql.driver as _;
 
@@ -27,7 +26,7 @@ DatabaseClientConfig databaseClientConfig = {
     ...databaseConfig,
     options: {
         ssl: {
-            mode: mysql:SSL_PREFERRED
+            mode: mysql:SSL_REQUIRED
         },
         connectTimeout: connectTimeout
     }
@@ -40,4 +39,4 @@ function initGithubDbClient() returns mysql:Client|error
 => new (...databaseClientConfig);
 
 # Github Stats database client.
-final jdbc:Client databaseClient = check initGithubDbClient();
+final mysql:Client databaseClient = check initGithubDbClient();

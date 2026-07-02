@@ -68,9 +68,10 @@ isolated function completeSyncJobQuery(int jobId, string status, int reposSynced
 # Idempotent for the same day via ON DUPLICATE KEY UPDATE on the snapshot_date unique key.
 #
 # + trackedRepoId - tracked_repositories.id
+# + snapshotDate - The UTC date ("YYYY-MM-DD") to record this snapshot under
 # + repoData - Repo-level snapshot values
 # + return - sql:ParameterizedQuery - Upsert query for the repository_daily_snapshots table
-isolated function repositorySnapshotUpsertQuery(int trackedRepoId, RepoSnapshotData repoData)
+isolated function repositorySnapshotUpsertQuery(int trackedRepoId, string snapshotDate, RepoSnapshotData repoData)
     returns sql:ParameterizedQuery =>
 `
     INSERT INTO repository_daily_snapshots
@@ -79,7 +80,7 @@ isolated function repositorySnapshotUpsertQuery(int trackedRepoId, RepoSnapshotD
     VALUES
         (${trackedRepoId}, ${repoData.totalDownloadCount}, ${repoData.forksCount},
          ${repoData.stargazersCount}, ${repoData.watchersCount}, ${repoData.openIssuesCount},
-         ${repoData.cloneCount}, ${repoData.cloneUniques}, CURDATE())
+         ${repoData.cloneCount}, ${repoData.cloneUniques}, ${snapshotDate})
     ON DUPLICATE KEY UPDATE
         total_download_count = VALUES(total_download_count),
         forks_count = VALUES(forks_count),
@@ -94,9 +95,10 @@ isolated function repositorySnapshotUpsertQuery(int trackedRepoId, RepoSnapshotD
 # Idempotent for the same day via ON DUPLICATE KEY UPDATE on the snapshot_date unique key.
 #
 # + trackedRepoId - tracked_repositories.id
+# + snapshotDate - The UTC date ("YYYY-MM-DD") to record this snapshot under
 # + asset - Asset-level snapshot values (already prefix-filtered)
 # + return - sql:ParameterizedQuery - Upsert query for the release_asset_daily_snapshots table
-isolated function assetSnapshotUpsertQuery(int trackedRepoId, AssetSnapshotData asset)
+isolated function assetSnapshotUpsertQuery(int trackedRepoId, string snapshotDate, AssetSnapshotData asset)
     returns sql:ParameterizedQuery =>
 `
     INSERT INTO release_asset_daily_snapshots
@@ -105,7 +107,7 @@ isolated function assetSnapshotUpsertQuery(int trackedRepoId, AssetSnapshotData 
     VALUES
         (${trackedRepoId}, ${asset.releaseTag}, ${asset.releaseName}, ${asset.assetName},
          ${asset.assetGithubId}, ${asset.contentType}, ${asset.assetSize},
-         ${asset.downloadCount}, CURDATE())
+         ${asset.downloadCount}, ${snapshotDate})
     ON DUPLICATE KEY UPDATE
         release_tag = VALUES(release_tag),
         release_name = VALUES(release_name),
