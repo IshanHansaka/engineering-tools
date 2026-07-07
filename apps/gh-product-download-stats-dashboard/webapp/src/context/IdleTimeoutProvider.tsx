@@ -26,7 +26,7 @@ interface IdleTimeoutProviderProps {
 }
 
 /**
- * Shows "Are you still there?" after 10 minutes of inactivity.
+ * Shows "Are you still there?" after 15 minutes of inactivity.
  * Never auto-logs out — the session stays signed in indefinitely; it's purely
  * informational and waits for the user to choose Continue or Logout.
  */
