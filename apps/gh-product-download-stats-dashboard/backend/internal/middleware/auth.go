@@ -184,7 +184,7 @@ func Auth(shutdownCtx context.Context, cfg Config) func(http.Handler) http.Handl
 		// jwkset's own NewDefaultCtx path uses) while keeping our sanitized client.
 		jwksClient, err := jwkset.NewHTTPClient(jwkset.HTTPClientOptions{
 			HTTPURLs:          map[string]jwkset.Storage{cfg.JWKSEndpoint: jwksStorage},
-			RateLimitWaitMax:  time.Minute,
+			RateLimitWaitMax:  2 * time.Second,
 			RefreshUnknownKID: rate.NewLimiter(rate.Every(5*time.Minute), 1),
 		})
 		if err != nil {
