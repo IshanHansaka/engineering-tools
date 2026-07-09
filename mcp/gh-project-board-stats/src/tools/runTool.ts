@@ -8,8 +8,13 @@ import { isRelease, belongsToFunction }
     from "../services/release.service";
 
 export async function runTool(client: any, route: any) {
-    const personalOwner = process.env.USERNAME;
+    const personalOwner = process.env.GITHUB_OWNER ?? process.env.USER ?? process.env.LOGNAME;
+    if (!personalOwner) throw new Error("Missing GITHUB_OWNER (or USER/LOGNAME) env var");
+
     const personalProjectNumber = Number(process.env.PROJECT_ID);
+    if (!Number.isFinite(personalProjectNumber)) {
+        throw new Error("Missing or invalid PROJECT_ID env var");
+    }
 
     const fieldsResult = await client.callTool({
         name: "projects_list",
