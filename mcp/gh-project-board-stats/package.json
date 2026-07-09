@@ -1,7 +1,7 @@
 {
   "name": "gh-project-board-stats",
   "version": "1.0.0",
-  "description": "",
+  "description": "GitHub Projects MCP service for retrieving and processing project board statistics",
   "main": "index.js",
   "scripts": {
     "build": "tsc",
@@ -10,7 +10,7 @@
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
+  "license": "Apache-2.0",
   "type": "commonjs",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.110.0",

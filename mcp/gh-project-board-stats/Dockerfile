@@ -22,7 +22,12 @@ COPY --from=builder /app/dist ./dist
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends curl tar && \
-    curl -L https://github.com/github/github-mcp-server/releases/download/v1.5.0/github-mcp-server_Linux_${TARGETARCH}.tar.gz \
+    if [ "$TARGETARCH" = "amd64" ]; then \
+        MCP_ARCH="x86_64"; \
+    else \
+        MCP_ARCH="$TARGETARCH"; \
+    fi && \
+    curl -L https://github.com/github/github-mcp-server/releases/download/v1.5.0/github-mcp-server_Linux_${MCP_ARCH}.tar.gz \
       -o /tmp/github-mcp-server.tar.gz && \
     tar -xzf /tmp/github-mcp-server.tar.gz -C /tmp && \
     mv /tmp/github-mcp-server /usr/local/bin/github-mcp-server && \
