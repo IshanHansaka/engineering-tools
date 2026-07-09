@@ -64,7 +64,7 @@ export async function runTool(client: any, route: any) {
                 isRelease(item)
                 &&
                 (
-                    !route.args.function ||
+                    !route?.args?.function ||
                     belongsToFunction(
                         item,
                         route.args.function
