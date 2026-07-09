@@ -46,7 +46,7 @@ export async function runTool(client: any, route: any) {
 
 
     const text = result.content?.map((c: any) => c.text).join("\n") ?? "";
-    if (!text) return { error: "No data returned from MCP" };
+    if (!text) throw new Error("No data returned from MCP");
 
     const rawData = JSON.parse(text);
     const items = rawData.items ?? [];
