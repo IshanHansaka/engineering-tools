@@ -22,10 +22,13 @@ COPY --from=builder /app/dist ./dist
 
 RUN apt-get update && \
     REAL_ARCH="${TARGETARCH:-amd64}" && \
+    REAL_ARCH="${TARGETARCH:-amd64}" && \
     if [ "$REAL_ARCH" = "amd64" ]; then \
-        MCP_ARCH="x86_64"; \
+    MCP_ARCH="x86_64"; \
+    elif [ "$REAL_ARCH" = "arm64" ]; then \
+    MCP_ARCH="arm64"; \
     else \
-        MCP_ARCH="arm64"; \
+    echo "Unsupported architecture: $REAL_ARCH" && exit 1; \
     fi && \
     curl -L "https://github.com/github/github-mcp-server/releases/download/v1.5.0/github-mcp-server_Linux_${MCP_ARCH}.tar.gz" \
       -o /tmp/github-mcp-server.tar.gz && \
