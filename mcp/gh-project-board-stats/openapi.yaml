@@ -5,7 +5,7 @@ info:
   version: 1.0.0
   description: >
     Backend service for querying GitHub Project board statistics through the GitHub MCP integration.
-    All endpoints require a valid JWT (x-jwt-assertion header injected by the Choreo gateway).
+    All endpoints except /health require a valid JWT (x-jwt-assertion header injected by the Choreo gateway).
 
 servers:
   - url: /
@@ -30,12 +30,16 @@ paths:
           description: OK
 
   /query:
-    post:
-      summary: Query GitHub project releases
-      responses:
-        '200':
-          description: Successful response
-        '400':
-          description: Invalid request
-        '500':
-          description: Internal server error
+  post:
+    summary: Query GitHub project releases
+    responses:
+      '200':
+        description: Successful response
+      '400':
+        description: Invalid request
+      '401':
+        description: Unauthorized
+      '504':
+        description: Request timed out
+      '500':
+        description: Internal server error
