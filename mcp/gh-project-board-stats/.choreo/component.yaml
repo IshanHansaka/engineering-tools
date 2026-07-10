@@ -1,0 +1,14 @@
+schemaVersion: 1.2
+
+endpoints:
+  - name: github-project-board-stats-api
+    displayName: GitHub Project Board Stats API
+    service:
+      basePath: /
+      port: 8080
+    type: REST
+    networkVisibilities:
+      - Public
+    schemaFilePath: openapi.yaml
+
+    

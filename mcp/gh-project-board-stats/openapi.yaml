@@ -1,0 +1,41 @@
+openapi: 3.0.3
+
+info:
+  title: GitHub Project Board Stats API
+  version: 1.0.0
+  description: >
+    Backend service for querying GitHub Project board statistics through the GitHub MCP integration.
+    All endpoints require a valid JWT (x-jwt-assertion header injected by the Choreo gateway).
+
+servers:
+  - url: /
+
+components:
+  securitySchemes:
+    jwtAssertion:
+      type: apiKey
+      in: header
+      name: x-jwt-assertion
+
+security:
+  - jwtAssertion: []
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      security: []
+      responses:
+        '200':
+          description: OK
+
+  /query:
+    post:
+      summary: Query GitHub project releases
+      responses:
+        '200':
+          description: Successful response
+        '400':
+          description: Invalid request
+        '500':
+          description: Internal server error
