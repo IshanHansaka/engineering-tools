@@ -15,12 +15,30 @@
 // under the License.
 
 import "dotenv/config";
-import readline from "node:readline";
+import express from "express";
 import Anthropic from "@anthropic-ai/sdk";
 
 import { connectMCP } from "./tools/mcpClient";
 import { routeIntent } from "./agent/routeIntent";
 import { runTool } from "./tools/runTool";
+
+function withTimeout<T>(
+    promise: Promise<T>,
+    timeoutMs: number
+): Promise<T> {
+    let timeout: NodeJS.Timeout;
+
+    const timeoutPromise = new Promise<T>((_, reject) => {
+        timeout = setTimeout(() => {
+            reject(new Error("Request timed out"));
+        }, timeoutMs);
+    });
+
+    return Promise.race([
+        promise.finally(() => clearTimeout(timeout)),
+        timeoutPromise
+    ]);
+}
 
 async function main() {
     if (!process.env.ANTHROPIC_API_KEY) {
@@ -32,49 +50,77 @@ async function main() {
 
     const client = await connectMCP();
 
-    console.log("GitHub Assistant is ready!");
+    const app = express();
 
-    const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout
+    app.use(express.json({
+        limit: "10kb"
+    }));
+
+    app.get("/health", (_req, res) => {
+        res.json({
+            status: "UP"
+        });
     });
 
-    rl.setPrompt("ASK > ");
-    rl.prompt();
-
-    rl.on("line", async (input) => {
-        const question = input.trim();
-        if (!question) return rl.prompt();
+    app.post("/query", async (req, res) => {
 
         try {
-            console.log("Understanding request...");
 
-            const intent = await routeIntent(anthropic, question);
-            console.log("Intent resolved:", intent);
-            const result = await runTool(client, intent);
+            const question = req.body?.question;
 
-            if (!Array.isArray(result) || result.length === 0) {
-                console.log("\nNo releases found for this week's iteration.\n");
-            } else {
-                console.log(`\nFound ${result.length} release(s):\n`);
-
-                result.forEach((release: any, index: number) => {
-
-                    console.log(
-                        `${index + 1}. ${release.content.title}`
-                    );
-
-                    console.log(
-                        `URL: ${release.content.html_url}`
-                    );
-
+            if (typeof question !== "string" || !question.trim()) {
+                return res.status(400).json({
+                    error: "Missing or invalid question"
                 });
             }
-        } catch (err) {
-            console.error(err);
-        }
 
-        rl.prompt();
+            console.log("Question:", question);
+
+            const intent =
+                await withTimeout(
+                    routeIntent(
+                        anthropic,
+                        question
+                    ),
+                    30000
+                );
+
+            const releases =
+                await withTimeout(
+                    runTool(
+                        client,
+                        intent
+                    ),
+                    30000
+                );
+
+            return res.json({
+                count: releases.length,
+                releases
+            });
+
+        } catch (error: any) {
+            console.error(error);
+
+            if (error.message === "Request timed out") {
+                return res.status(504).json({
+                    error: "Request timed out"
+                });
+            }
+
+            return res.status(500).json({
+                error: "Internal server error"
+            });
+        }
+    });
+
+    const port =
+        Number(process.env.PORT) || 8080;
+
+    app.listen(port, () => {
+        console.log(
+            `GitHub Project Board Stats Service listening on port ${port}`
+        );
     });
 }
 
