@@ -43,6 +43,8 @@ paths:
               properties:
                 question:
                   type: string
+                  minLength: 1
+                  pattern: '.*\S.*'
                   description: The query question to ask the AI agent about project releases.
                   example: "What are releases this week?"
       responses:
