@@ -32,6 +32,21 @@ paths:
   /query:
     post:
       summary: Query GitHub project releases
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - question
+              properties:
+                question:
+                  type: string
+                  minLength: 1
+                  pattern: '.*\S.*'
+                  description: The query question to ask the AI agent about project releases.
+                  example: "What are releases this week?"
       responses:
         '200':
           description: Successful response
