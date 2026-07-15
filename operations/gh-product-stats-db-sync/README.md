@@ -58,7 +58,14 @@ run is always safe to retry.
 - **Clone traffic** is the one non-cumulative metric: GitHub reports it per-day,
   and the current day's figure is partial until the day closes. The sync
   therefore stores **yesterday's** (the most recent complete day's) clone
-  count/uniques.
+  count/uniques. **Caveat:** GitHub's traffic rollup lags UTC midnight by
+  several hours, so a run shortly after midnight typically finds no bucket for
+  the just-ended day and stores 0 for it. To compensate, every run also
+  **backfills** earlier days' snapshot rows from the up-to-14 daily buckets the
+  API returns (bucket for day D updates the row with `snapshot_date = D + 1`) —
+  whatever one run misses, the next day's run self-heals. Backfill failures are
+  soft (logged, never fail the repo sync), and updates target only existing
+  rows.
 
 ## Asset prefix filtering
 
@@ -125,7 +132,8 @@ bal run
 
 Deployed as a **Choreo Scheduled Task**. Schedule it **once daily, early in the
 UTC day** (e.g. ~00:30 UTC) — the date semantics above assume this: running
-early keeps "yesterday's clone data" complete and the cumulative totals
-coherent with the snapshot date. Configuration values come from Choreo's
+early keeps the cumulative totals coherent with the snapshot date. Clone
+figures for the just-ended day are usually not yet published by GitHub at that
+hour; they arrive via the next run's backfill (see Date semantics above). Configuration values come from Choreo's
 Configs & Secrets, mirroring `Config.toml.local`; ensure the database user is
 granted access from Choreo's egress IP range.
