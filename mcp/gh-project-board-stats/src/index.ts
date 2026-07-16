@@ -43,6 +43,31 @@ function getMcpResponseText(result: any): string {
         .join("\n");
 }
 
+async function getProjectIdAndTitleByName(client: any, owner: string, name: string): Promise<{ number: number; title: string } | null> {
+    try {
+        const discovery = await client.callTool({
+            name: "projects_list",
+            arguments: { method: "list_projects", owner }
+        });
+
+        const discoveryText = getMcpResponseText(discovery);
+        if (!discoveryText.trim().startsWith('{') && !discoveryText.trim().startsWith('[')) {
+            console.error("MCP Tool Error Output:", discoveryText);
+            return null;
+        }
+
+        const raw = JSON.parse(discoveryText);
+
+        const projects = Array.isArray(raw) ? raw : (raw.projects || []);
+        const matched = projects.find((p: any) => p.title.toLowerCase().includes(name.toLowerCase()));
+
+        return matched ? { number: matched.number, title: matched.title } : null;
+    } catch (err) {
+        console.error("Failed to parse project list:", err);
+        return null;
+    }
+}
+
 async function main() {
     await initializeDatabase();
 
@@ -53,9 +78,7 @@ async function main() {
     app.use(express.json({ limit: "10kb" }));
 
     app.get("/health", (_req, res) => {
-        res.json({
-            status: "UP"
-        });
+        res.json({ status: "UP" });
     });
 
     app.post("/query", async (req, res) => {
@@ -79,36 +102,30 @@ async function main() {
 
             if (session && session.current_state === 'AWAITING_REMEMBER_CONFIRMATION') {
                 const isYes = /yes|yep|sure|yeah/i.test(question);
-                let activeId = savedPreference ? savedPreference.project_id : null;
 
-                if (isYes && session.pending_board_name) {
-                    const discovery = await withTimeout(
-                        client.callTool({ name: "projects_list", arguments: { method: "list_projects", owner: ownerGroup } }),
-                        30000
+                const projectDetails = await getProjectIdAndTitleByName(client, ownerGroup, session.pending_board_name);
+
+                if (!projectDetails) {
+                    await dbPool.execute("DELETE FROM user_session_state WHERE user_id = ?", [userId]);
+                    return res.json({
+                        message: `I couldn't locate the board "${session.pending_board_name}" on GitHub anymore. Let's restart.`
+                    });
+                }
+
+                if (isYes) {
+                    await dbPool.execute(
+                        "INSERT INTO user_project_preferences (user_id, project_id, organization_name, board_name, is_remembered) VALUES (?, ?, ?, ?, 1) ON DUPLICATE KEY UPDATE project_id=?, board_name=?, is_remembered=1",
+                        [userId, projectDetails.number, ownerGroup, projectDetails.title, projectDetails.number, projectDetails.title]
                     );
-                    const raw = JSON.parse(getMcpResponseText(discovery));
-                    const project = raw.projects?.find((p: any) => p.title.toLowerCase().includes(session.pending_board_name.toLowerCase()));
-
-                    if (project) {
-                        await dbPool.execute(
-                            "INSERT INTO user_project_preferences (user_id, project_id, organization_name, board_name, is_remembered) VALUES (?, ?, ?, ?, 1) ON DUPLICATE KEY UPDATE project_id=?, board_name=?, is_remembered=1",
-                            [userId, project.number, ownerGroup, project.title, project.number, project.title]
-                        );
-                        activeId = project.number;
-                    }
-                } else if (session.pending_board_name) {
-                    activeId = await getProjectIdByName(client, ownerGroup, session.pending_board_name);
                 }
 
                 const intentArgs = { args: { iteration: session.pending_iteration || 'this_week', function: session.pending_function } };
-
                 const releases = await withTimeout(
-                    runTool(client, intentArgs, { owner: ownerGroup, projectNumber: activeId }),
+                    runTool(client, intentArgs, { owner: ownerGroup, projectNumber: projectDetails.number }),
                     30000
                 );
 
                 const releaseList = releases.map((r: any) => `• ${r.content?.title ?? "Untitled Issue"}`).join("\n");
-
                 const saveMessage = isYes
                     ? "Great. I'll remember this board for your future queries!"
                     : "Got it. I won't remember this setting.";
@@ -136,29 +153,17 @@ async function main() {
             const intent = await routeIntent(anthropic, question, activeBoardName);
 
             if (intent.extractedBoardName) {
-                const discovery = await withTimeout(
-                    client.callTool({ name: "projects_list", arguments: { method: "list_projects", owner: ownerGroup } }),
-                    30000
-                );
-                const raw = JSON.parse(getMcpResponseText(discovery));
-                const matchedProject = raw.projects?.find((p: any) =>
-                    p.title.toLowerCase().includes(intent.extractedBoardName.toLowerCase())
-                );
+                const projectDetails = await getProjectIdAndTitleByName(client, ownerGroup, intent.extractedBoardName);
 
-                if (matchedProject) {
-                    await dbPool.execute(
-                        "INSERT INTO user_project_preferences (user_id, project_id, organization_name, board_name, is_remembered) VALUES (?, ?, ?, ?, 1) ON DUPLICATE KEY UPDATE project_id=?, board_name=?, is_remembered=1",
-                        [userId, matchedProject.number, ownerGroup, matchedProject.title, matchedProject.number, matchedProject.title]
-                    );
-
+                if (projectDetails) {
                     const releases = await withTimeout(
-                        runTool(client, intent, { owner: ownerGroup, projectNumber: matchedProject.number }),
+                        runTool(client, intent, { owner: ownerGroup, projectNumber: projectDetails.number }),
                         30000
                     );
                     const releaseList = releases.map((r: any) => `• ${r.content?.title ?? "Untitled Issue"}`).join("\n");
 
                     return res.json({
-                        message: `Got it. I'll use the ${matchedProject.title}.\n\nAccording to the current iteration, the planned releases for this week are:\n${releaseList || "• No current releases found."}`
+                        message: `Got it. I'll use the ${projectDetails.title}.\n\nAccording to the current iteration, the planned releases for this week are:\n${releaseList || "• No current releases found."}`
                     });
                 } else {
                     return res.json({
@@ -167,15 +172,14 @@ async function main() {
                 }
             }
 
-            if (intent.status === "REQUIRES_BOARD_SELECTION") {
+            if (intent.status === "REQUIRES_BOARD_SELECTION" || !savedPreference) {
                 const discovery = await withTimeout(
-                    client.callTool({ name: "projects_list", arguments: { owner: ownerGroup } }),
+                    client.callTool({ name: "projects_list", arguments: { method: "list_projects", owner: ownerGroup } }),
                     30000
                 );
 
                 const discoveryText = getMcpResponseText(discovery);
-
-                if (!discoveryText.trim().startsWith('{')) {
+                if (!discoveryText.trim().startsWith('{') && !discoveryText.trim().startsWith('[')) {
                     console.error("GitHub MCP Server rejected request. Diagnostic details:", discoveryText);
                     return res.status(502).json({
                         error: "Failed to read projects from GitHub.",
@@ -184,14 +188,15 @@ async function main() {
                 }
 
                 const raw = JSON.parse(discoveryText);
-                const boardsList = raw.projects?.map((p: any) => p.title) ?? [];
+                const projects = Array.isArray(raw) ? raw : (raw.projects || []);
+                const boardsList = projects.map((p: any) => p.title) ?? [];
 
                 await dbPool.execute(
                     "INSERT INTO user_session_state (user_id, current_state, pending_iteration, pending_function) VALUES (?, 'AWAITING_BOARD_SELECTION', ?, ?) ON DUPLICATE KEY UPDATE current_state='AWAITING_BOARD_SELECTION', pending_iteration=?, pending_function=?",
-                    [userId, intent.args.iteration, intent.args.function, intent.args.iteration, intent.args.function]
+                    [userId, intent.args?.iteration ?? 'this_week', intent.args?.function ?? null, intent.args?.iteration ?? 'this_week', intent.args?.function ?? null]
                 );
 
-                if (boardsList.length > 1) {
+                if (boardsList.length > 0) {
                     const boardOptions = boardsList.map((b: string) => `• ${b}`).join("\n");
                     return res.json({
                         message: `I found multiple project boards associated with you:\n${boardOptions}\n\nWhich one would you like me to check?`
@@ -221,27 +226,6 @@ async function main() {
             return res.status(500).json({ error: "Internal server error" });
         }
     });
-
-    async function getProjectIdByName(client: any, owner: string, name: string): Promise<number> {
-        try {
-            const discovery = await client.callTool({
-                name: "projects_list",
-                arguments: { owner }
-            });
-
-            const discoveryText = getMcpResponseText(discovery);
-            if (!discoveryText.trim().startsWith('{') && !discoveryText.trim().startsWith('[')) {
-                console.error("MCP Tool Error Output:", discoveryText);
-                return 0;
-            }
-
-            const raw = JSON.parse(discoveryText);
-            return raw.projects?.find((p: any) => p.title.toLowerCase().includes(name.toLowerCase()))?.number || 0;
-        } catch (err) {
-            console.error("Failed to parse project list:", err);
-            return 0;
-        }
-    }
 
     const port = Number(process.env.PORT) || 8080;
     app.listen(port, () => console.log(`Stats Service online on: ${port}`));
