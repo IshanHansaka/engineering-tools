@@ -79,6 +79,21 @@ export function isMatchingIteration(
         return start > today;
     }
 
+    if (requestedIteration === "previous_week") {
+        const today = new Date();
+
+        const start = new Date(
+            iteration.start_date
+        );
+
+        const end = new Date(start);
+
+        end.setDate(
+            start.getDate() + iteration.duration - 1
+        );
+        return end < today;
+    }
+
 
     return false;
 }
