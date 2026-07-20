@@ -57,17 +57,6 @@ export async function initializeDatabase() {
     `);
 
     await dbPool.execute(`
-      CREATE TABLE IF NOT EXISTS user_project_preferences (
-        github_id VARCHAR(100) NOT NULL,
-        project_id INT NOT NULL,
-        organization_name VARCHAR(100) NOT NULL,
-        board_name VARCHAR(150) NOT NULL,
-        is_remembered TINYINT(1) DEFAULT 0,
-        PRIMARY KEY (github_id, project_id)
-      );
-    `);
-
-    await dbPool.execute(`
       CREATE TABLE IF NOT EXISTS project_board_metadata (
         project_id INT PRIMARY KEY,
         layout_type ENUM('ITERATION_BASED', 'FLAT_KANBAN') DEFAULT 'ITERATION_BASED',
@@ -85,23 +74,60 @@ export async function initializeDatabase() {
       );
     `);
 
-    try {
-      const [columns]: any = await dbPool.execute(
-        "SHOW COLUMNS FROM user_project_preferences LIKE 'user_id'"
-      );
+    const [tableExists]: any = await dbPool.execute(`
+      SELECT COUNT(*) as count FROM information_schema.tables 
+      WHERE table_schema = ? AND table_name = 'user_project_preferences'
+    `, [dbConfig.database]);
+
+    if (tableExists[0].count > 0) {
+      const [columns]: any = await dbPool.execute(`
+        SHOW COLUMNS FROM user_project_preferences LIKE 'user_id'
+      `);
 
       if (columns.length > 0) {
-        console.log("Legacy 'user_id' schema context detected. Migrating tracking preference table layout structures...");
+        try {
+          const [sampleRows]: any = await dbPool.execute("SELECT user_id FROM user_project_preferences LIMIT 5");
+          const requiresIdentityBackfill = sampleRows.some((row: any) => row.user_id.includes('@'));
 
-        // Migration: Drop the old primary key and change the column name to 'github_id'
-        await dbPool.execute("ALTER TABLE user_project_preferences DROP PRIMARY KEY");
-        await dbPool.execute("ALTER TABLE user_project_preferences CHANGE COLUMN user_id github_id VARCHAR(100) NOT NULL");
-        await dbPool.execute("ALTER TABLE user_project_preferences ADD PRIMARY KEY (github_id, project_id)");
+          if (requiresIdentityBackfill) {
+            await dbPool.execute(`
+              UPDATE user_project_preferences upp
+              JOIN users u ON upp.user_id = u.email
+              SET upp.user_id = u.github_id
+            `);
+          }
 
-        console.log("Table structures for 'user_project_preferences' patched successfully.");
+          const [pkCheck]: any = await dbPool.execute(`
+            SELECT COLUMN_NAME FROM information_schema.KEY_COLUMN_USAGE 
+            WHERE table_schema = ? AND table_name = 'user_project_preferences' AND CONSTRAINT_NAME = 'PRIMARY'
+          `, [dbConfig.database]);
+
+          const structuralPkList = pkCheck.map((c: any) => c.COLUMN_NAME);
+
+          if (structuralPkList.includes('user_id')) {
+            await dbPool.execute("ALTER TABLE user_project_preferences DROP PRIMARY KEY");
+          }
+
+          await dbPool.execute("ALTER TABLE user_project_preferences CHANGE COLUMN user_id github_id VARCHAR(100) NOT NULL");
+          await dbPool.execute("ALTER TABLE user_project_preferences ADD PRIMARY KEY (github_id, project_id)");
+
+          console.log("Migration steps for user preference constraints successfully finalized.");
+        } catch (migrationFatalError) {
+          console.error("FATAL: Database schema migration failed down midway. Halting execution context to prevent structural data corruption:", migrationFatalError);
+          process.exit(1);
+        }
       }
-    } catch (migrationErr) {
-      console.error("Warning: Optional database structural migration engine threw a structural state check exception: ", migrationErr);
+    } else {
+      await dbPool.execute(`
+        CREATE TABLE IF NOT EXISTS user_project_preferences (
+          github_id VARCHAR(100) NOT NULL,
+          project_id INT NOT NULL,
+          organization_name VARCHAR(100) NOT NULL,
+          board_name VARCHAR(150) NOT NULL,
+          is_remembered TINYINT(1) DEFAULT 0,
+          PRIMARY KEY (github_id, project_id)
+        );
+      `);
     }
 
     console.log("Database structural tables checked/initialized.");

@@ -17,6 +17,8 @@
 import "dotenv/config";
 import express from "express";
 import Anthropic from "@anthropic-ai/sdk";
+import jwt from "jsonwebtoken";
+import jwksClient from "jwks-rsa";
 import { connectMCP } from "./tools/mcpClient";
 import { routeIntent } from "./agent/routeIntent";
 import { runTool } from "./tools/runTool";
@@ -32,30 +34,53 @@ export interface RoutedIntent {
     conversationalResponse: string | null;
 }
 
-function extractClaimsFromJwt(jwtAssertion: string): { githubId: string; email: string } | null {
-    try {
-        const parts = jwtAssertion.split('.');
-        if (parts.length !== 3) return null;
+const choreoJwksUri = process.env.CHOREO_JWKS_URI || "https://sts.choreo.dev/oauth2/jwks";
 
-        const payloadJson = Buffer.from(parts[1], 'base64url').toString('utf-8');
-        const payload = JSON.parse(payloadJson);
+const clientJwks = jwksClient({
+    jwksUri: choreoJwksUri,
+    cache: true,
+    cacheMaxEntries: 5,
+    cacheMaxAge: 600000
+});
 
-        const currentTime = Math.floor(Date.now() / 1000);
-        if (payload.exp && currentTime >= payload.exp) {
-            console.error("JWT validation failed: Token expired.");
-            return null;
+function getKey(header: jwt.JwtHeader, callback: jwt.SigningKeyCallback) {
+    clientJwks.getSigningKey(header.kid, (err, key) => {
+        if (err || !key) {
+            return callback(err || new Error("JWKS key match not found"));
         }
+        const signingKey = key.getPublicKey();
+        callback(null, signingKey);
+    });
+}
 
-        const githubId = payload.github_id || payload.sub;
-        const email = payload.email;
+async function extractClaimsFromJwt(jwtAssertion: string): Promise<{ githubId: string; email: string } | null> {
+    return new Promise((resolve) => {
 
-        if (!githubId || !email) return null;
+        jwt.verify(jwtAssertion, getKey, { algorithms: ["RS256"] }, (err, decoded: any) => {
+            if (err || !decoded) {
+                console.error("JWT cryptographical verification constraint violation:", err?.message);
+                return resolve(null);
+            }
 
-        return { githubId: String(githubId).trim(), email: String(email).trim() };
-    } catch (err) {
-        console.error("Failed to decode JWT assertion claims:", err);
-        return null;
-    }
+            if (!decoded.exp) {
+                console.error("JWT configuration context error: Token missing explicit expiration 'exp' parameters.");
+                return resolve(null);
+            }
+
+            const githubId = decoded.github_id || decoded.sub;
+            const email = decoded.email;
+
+            if (!githubId || !email) {
+                console.error("JWT claims payload is missing required github_id or email fields.");
+                return resolve(null);
+            }
+
+            resolve({
+                githubId: String(githubId).trim(),
+                email: String(email).trim()
+            });
+        });
+    });
 }
 
 function withTimeout<T>(
@@ -165,7 +190,7 @@ async function main() {
                 return res.status(401).json({ error: "Missing identity assertion context token." });
             }
 
-            const claims = extractClaimsFromJwt(jwtAssertion);
+            const claims = await extractClaimsFromJwt(jwtAssertion);
             if (!claims || !/^[a-zA-Z0-9_\-]+$/.test(claims.githubId)) {
                 return res.status(401).json({ error: "Invalid identity verification parameters." });
             }
@@ -176,7 +201,6 @@ async function main() {
                 return res.status(400).json({ error: "Missing or invalid question" });
             }
 
-            // Safe User Management Flow (Fixed PII and Race Conditions)
             const [userRows]: any = await dbPool.execute(
                 "SELECT github_id, email FROM users WHERE github_id = ?",
                 [githubId]
