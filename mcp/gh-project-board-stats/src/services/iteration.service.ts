@@ -19,38 +19,59 @@ import { getProjectFieldValue }
 
 
 export function getIterationValue(item: any) {
-
-    return getProjectFieldValue(
-        item,
-        "Iteration"
-    );
+    const value = getProjectFieldValue(item, "Iteration");
+    return value;
 }
 
-export function isCurrentIteration(
-    iteration: any
-) {
+function startOfDay(date: Date): Date {
+    const d = new Date(date);
+    d.setHours(0, 0, 0, 0);
+    return d;
+}
 
-    if (!iteration) {
+function getValidatedDuration(iteration: any): number | null {
+    const duration = Number(iteration?.duration);
+    if (!Number.isFinite(duration) || duration <= 0) {
+        console.warn(
+            "[Warning] Invalid or missing iteration.duration:",
+            iteration?.duration
+        );
+        return null;
+    }
+    return duration;
+}
+
+function getIterationWindow(iteration: any): { start: Date; end: Date } | null {
+    if (!iteration?.start_date) {
+        return null;
+    }
+
+    const duration = getValidatedDuration(iteration);
+    if (duration === null) {
+        return null;
+    }
+
+    const start = startOfDay(new Date(iteration.start_date));
+    if (isNaN(start.getTime())) {
+        console.warn("[Warning] Invalid iteration.start_date:", iteration.start_date);
+        return null;
+    }
+
+    const end = new Date(start);
+    end.setDate(start.getDate() + duration - 1);
+
+    return { start, end };
+}
+
+export function isCurrentIteration(iteration: any) {
+    const window = getIterationWindow(iteration);
+    if (!window) {
         return false;
     }
 
-    const today = new Date();
+    const today = startOfDay(new Date());
 
-    const start = new Date(
-        iteration.start_date
-    );
-
-    const end = new Date(start);
-
-    end.setDate(
-        start.getDate() + iteration.duration - 1
-    );
-
-
-    return (
-        today >= start &&
-        today <= end
-    );
+    return today >= window.start && today <= window.end;
 }
 
 export function isMatchingIteration(
@@ -62,43 +83,36 @@ export function isMatchingIteration(
         return false;
     }
 
-
     if (requestedIteration === "this_week") {
         return isCurrentIteration(iteration);
     }
 
-
     if (requestedIteration === "next_week") {
-
-        const today = new Date();
-
-        const start = new Date(
-            iteration.start_date
-        );
-
-        return start > today;
+        const start = new Date(iteration.start_date);
+        if (isNaN(start.getTime())) {
+            console.warn("[Warning] Invalid iteration.start_date:", iteration.start_date);
+            return false;
+        }
+        const today = startOfDay(new Date());
+        return startOfDay(start) > today;
     }
 
     if (requestedIteration === "previous_week") {
-        const today = new Date();
-        const targetPastDate = new Date();
-        targetPastDate.setDate(today.getDate() - iteration.duration);
+        const window = getIterationWindow(iteration);
+        if (!window) {
+            return false;
+        }
 
-        const start = new Date(
-            iteration.start_date
-        );
+        const today = startOfDay(new Date());
+        const duration = getValidatedDuration(iteration)!;
+        const targetPastDate = new Date(today);
+        targetPastDate.setDate(today.getDate() - duration);
 
-        const end = new Date(start);
-
-        end.setDate(
-            start.getDate() + iteration.duration - 1
-        );
         return (
-            targetPastDate >= start &&
-            targetPastDate <= end
+            targetPastDate >= window.start &&
+            targetPastDate <= window.end
         );
     }
-
 
     return false;
 }

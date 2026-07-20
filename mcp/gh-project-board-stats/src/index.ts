@@ -37,7 +37,7 @@ function extractClaimsFromJwt(jwtAssertion: string): { githubId: string; email: 
         const parts = jwtAssertion.split('.');
         if (parts.length !== 3) return null;
 
-        const payloadJson = Buffer.from(parts[1], 'base64').toString('utf-8');
+        const payloadJson = Buffer.from(parts[1], 'base64url').toString('utf-8');
         const payload = JSON.parse(payloadJson);
 
         const githubId = payload.github_id || payload.sub;
@@ -137,7 +137,11 @@ async function main() {
 
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const client = await connectMCP();
-    const app = express();
+    const app = WebExpress();
+
+    function WebExpress() {
+        return express();
+    }
 
     app.use(express.json({ limit: "10kb" }));
 
@@ -178,7 +182,7 @@ async function main() {
             );
 
             const session = sessionRows[0] || null;
-            const savedPreference = prefRows[0] || null;
+            const savedPreferences: Array<{ project_id: number; board_name: string }> = prefRows || [];
 
             if (session && session.current_state === 'AWAITING_REMEMBER_CONFIRMATION') {
                 const isYes = /^(yes|yep|sure|yeah|y)$/i.test(question.trim());
@@ -191,20 +195,27 @@ async function main() {
                 if (!projectDetails) {
                     await dbPool.execute("DELETE FROM user_session_state WHERE github_id = ?", [githubId]);
                     return res.json({
-                        message: `I couldn't locate the board "${session.pending_board_name}" on GitHub anymore. Let's restart.`
+                        message: `Hmm, I couldn't find "${session.pending_board_name}" on GitHub anymore. Let's try starting fresh.`
                     });
                 }
 
                 if (isYes) {
-                    await dbPool.execute(
-                        "UPDATE user_project_preferences SET is_remembered = 0 WHERE github_id = ?",
-                        [githubId]
+                    const [existing]: any = await dbPool.execute(
+                        "SELECT 1 FROM user_project_preferences WHERE github_id = ? AND project_id = ?",
+                        [githubId, projectDetails.number]
                     );
 
-                    await dbPool.execute(
-                        "INSERT INTO user_project_preferences (github_id, project_id, organization_name, board_name, is_remembered) VALUES (?, ?, ?, ?, 1) ON DUPLICATE KEY UPDATE project_id=?, board_name=?, is_remembered=1",
-                        [githubId, projectDetails.number, ownerGroup, projectDetails.title, projectDetails.number, projectDetails.title]
-                    );
+                    if (existing.length === 0) {
+                        await dbPool.execute(
+                            "INSERT INTO user_project_preferences (github_id, project_id, organization_name, board_name, is_remembered) VALUES (?, ?, ?, ?, 1)",
+                            [githubId, projectDetails.number, ownerGroup, projectDetails.title]
+                        );
+                    } else {
+                        await dbPool.execute(
+                            "UPDATE user_project_preferences SET is_remembered = 1 WHERE github_id = ? AND project_id = ?",
+                            [githubId, projectDetails.number]
+                        );
+                    }
                 }
 
                 const intentArgs: RoutedIntent = {
@@ -222,11 +233,12 @@ async function main() {
                 );
 
                 const releaseList = releases.map((r: any) => `• ${r.content?.title ?? "Untitled Issue"}`).join("\n");
-                const saveMessage = isYes
-                    ? "Great. I'll remember this board for your future queries!"
-                    : "Got it. I won't remember this setting.";
 
-                const responseMsg = `${saveMessage} Let me check the target timeline.\n\nAccording to the ${formatIterationLabel(targetIteration)}, the planned releases are:\n${releaseList || "• No active releases found."}`;
+                const saveMessage = isYes
+                    ? `Awesome! I've saved "${projectDetails.title}" to your permanent tracking preferences.`
+                    : `Got it, I won't save this board layout to your shortcuts.`;
+
+                const responseMsg = `${saveMessage}\n\nHere are the planned releases from "${projectDetails.title}" for the ${formatIterationLabel(targetIteration)}:\n${releaseList || "• No active releases found."}`;
 
                 await dbPool.execute("DELETE FROM user_session_state WHERE github_id = ?", [githubId]);
                 return res.json({ message: responseMsg });
@@ -241,7 +253,7 @@ async function main() {
 
                 if (!projectDetails) {
                     return res.json({
-                        message: `I couldn't find a board named "${chosenBoard}". Please type one of the valid options listed above.`
+                        message: `I couldn't find a board named "${chosenBoard}". Please pick or type one of the exact names listed above.`
                     });
                 }
 
@@ -251,50 +263,28 @@ async function main() {
                 );
 
                 return res.json({
-                    message: `Got it. I'll use the "${projectDetails.title}". Should I remember this board for your future release queries?`
+                    message: `Got it, pulling up "${projectDetails.title}". Would you like me to add this board to your saved preferences list so you can track it easily later?`
                 });
             }
 
-            const activeBoardName = savedPreference ? savedPreference.board_name : null;
-
-            const rawIntent = await routeIntent(anthropic, question, activeBoardName);
+            const primaryContextName = savedPreferences.length > 0 ? savedPreferences[0].board_name : null;
+            const rawIntent = await routeIntent(anthropic, question, primaryContextName);
 
             if (!rawIntent || typeof rawIntent !== "object") {
                 throw new Error("Invalid shape: routeIntent did not return a valid object structure");
-            }
-            if (rawIntent.status !== "READY" && rawIntent.status !== "REQUIRES_BOARD_SELECTION") {
-                throw new Error(`Invalid shape: Incorrect status flag value received ("${rawIntent.status}")`);
-            }
-            if (!rawIntent.args || typeof rawIntent.args !== "object") {
-                throw new Error("Invalid shape: Missing internal arguments parameter container object");
-            }
-            if (typeof rawIntent.args.iteration !== "string") {
-                throw new Error("Invalid shape: Missing or malformed iteration string marker value");
             }
 
             const intent = rawIntent as RoutedIntent;
             const resolvedIteration = intent.args?.iteration ?? 'this_week';
 
+            let matchedPreference = null;
             if (intent.extractedBoardName) {
-                const projectDetails = await withTimeout(30000, (signal) =>
-                    getProjectIdAndTitleByName(client, ownerGroup, intent.extractedBoardName!, signal)
+                matchedPreference = savedPreferences.find(
+                    p => p.board_name.toLowerCase().trim() === intent.extractedBoardName!.toLowerCase().trim()
                 );
-
-                if (projectDetails) {
-                    const releases = await withTimeout(30000, (signal) =>
-                        runTool(client, intent, { owner: ownerGroup, projectNumber: projectDetails.number }, signal)
-                    );
-                    const releaseList = releases.map((r: any) => `• ${r.content?.title ?? "Untitled Issue"}`).join("\n");
-
-                    return res.json({
-                        message: `Based on the active configuration for "${projectDetails.title}", the planned releases for the ${formatIterationLabel(resolvedIteration)} are:\n${releaseList || "• No active releases found."}`
-                    });
-                }
-
-                intent.status = "REQUIRES_BOARD_SELECTION";
             }
 
-            if (intent.status === "REQUIRES_BOARD_SELECTION" || !savedPreference) {
+            if ((intent.status === "REQUIRES_BOARD_SELECTION" && !matchedPreference) || (savedPreferences.length === 0 && !intent.extractedBoardName)) {
                 const discovery = await withTimeout(30000, (signal) => {
                     if (signal.aborted) return Promise.reject(new Error("Request aborted"));
                     return client.callTool({
@@ -306,40 +296,126 @@ async function main() {
                 const discoveryText = getMcpResponseText(discovery);
                 const raw = safeJsonParse(discoveryText);
                 const projects = Array.isArray(raw) ? raw : (raw.projects || []);
-                const boardsList = projects.map((p: any) => p.title) ?? [];
+                const githubBoardsList = projects.map((p: any) => p.title) ?? [];
 
                 await dbPool.execute(
                     "INSERT INTO user_session_state (github_id, current_state, pending_iteration, pending_function) VALUES (?, 'AWAITING_BOARD_SELECTION', ?, ?) ON DUPLICATE KEY UPDATE current_state='AWAITING_BOARD_SELECTION', pending_iteration=?, pending_function=?",
                     [githubId, resolvedIteration, intent.args?.function ?? null, resolvedIteration, intent.args?.function ?? null]
                 );
 
-                if (boardsList.length > 0) {
-                    const boardOptions = boardsList.map((b: string) => `• ${b}`).join("\n");
+                let introductoryText = "Let's choose a project workspace. ";
+                if (savedPreferences.length > 0) {
+                    const savedNames = savedPreferences.map(p => `"${p.board_name}"`).join(", ");
+                    introductoryText = `You currently have quick access shortcuts saved for: ${savedNames}. `;
+                }
+
+                if (githubBoardsList.length > 0) {
+                    const boardOptions = githubBoardsList.map((b: string) => `• ${b}`).join("\n");
                     return res.json({
-                        message: `I found multiple project boards associated with you:\n${boardOptions}\n\nWhich one would you like me to check?`
+                        message: `${introductoryText}Here are the project boards available on your GitHub workspace:\n\n${boardOptions}\n\nWhich one would you like to view?`
                     });
                 } else {
                     return res.json({
-                        message: "Sure. Which GitHub project board would you like me to check?"
+                        message: "Which GitHub project board should I take a look at?"
                     });
                 }
             }
 
-            const releases = await withTimeout(30000, (signal) =>
-                runTool(client, intent, { owner: ownerGroup, projectNumber: savedPreference.project_id }, signal)
+            if (intent.extractedBoardName) {
+                if (matchedPreference) {
+                    const releases = await withTimeout(30000, (signal) =>
+                        runTool(client, intent, { owner: ownerGroup, projectNumber: matchedPreference.project_id }, signal)
+                    );
+                    const releaseList = releases.map((r: any) => `• ${r.content?.title ?? "Untitled Issue"}`).join("\n");
+
+                    return res.json({
+                        message: `Here are the planned releases for "${matchedPreference.board_name}" during the ${formatIterationLabel(resolvedIteration)}:\n\n${releaseList || "• No active releases found."}`
+                    });
+                } else {
+                    const projectDetails = await withTimeout(30000, (signal) =>
+                        getProjectIdAndTitleByName(client, ownerGroup, intent.extractedBoardName!, signal)
+                    );
+
+                    if (!projectDetails) {
+                        return res.json({
+                            message: `I noticed you wanted to open "${intent.extractedBoardName}", but I couldn't verify that exact board name on your GitHub workspace. Which project board should I check?`
+                        });
+                    }
+
+                    const pendingFunc = intent.args?.function ?? null;
+                    await dbPool.execute(
+                        `INSERT INTO user_session_state 
+                        (github_id, current_state, pending_iteration, pending_function, pending_board_name) 
+                        VALUES (?, 'AWAITING_REMEMBER_CONFIRMATION', ?, ?, ?) 
+                        ON DUPLICATE KEY UPDATE 
+                        current_state='AWAITING_REMEMBER_CONFIRMATION', pending_iteration=?, pending_function=?, pending_board_name=?`,
+                        [
+                            githubId,
+                            resolvedIteration,
+                            pendingFunc,
+                            projectDetails.title,
+                            resolvedIteration,
+                            pendingFunc,
+                            projectDetails.title
+                        ]
+                    );
+
+                    return res.json({
+                        message: `Got it, I found "${projectDetails.title}". Would you like me to add this board to your saved preferences list so you can track it easily later?`
+                    });
+                }
+            }
+
+            const iterationLabel = formatIterationLabel(resolvedIteration);
+
+            if (savedPreferences.length === 1) {
+                const singlePref = savedPreferences[0];
+                const releases = await withTimeout(30000, (signal) =>
+                    runTool(client, intent, { owner: ownerGroup, projectNumber: singlePref.project_id }, signal)
+                );
+                const releaseList = releases.map((r: any) => `• ${r.content?.title ?? "Untitled Issue"}`).join("\n");
+                return res.json({
+                    message: `Here are the planned releases for "${singlePref.board_name}" during the ${iterationLabel}:\n\n${releaseList || "• No active releases found."}`
+                });
+            }
+
+            const multiReleaseResults = await Promise.all(
+                savedPreferences.map(async (pref) => {
+                    try {
+                        const releases = await withTimeout(15000, (signal) =>
+                            runTool(client, intent, { owner: ownerGroup, projectNumber: pref.project_id }, signal)
+                        );
+                        return {
+                            boardName: pref.board_name,
+                            list: releases.map((r: any) => `  • ${r.content?.title ?? "Untitled Issue"}`).join("\n")
+                        };
+                    } catch (err) {
+                        console.error(`Failed to fetch releases for board ${pref.board_name}:`, err);
+                        return {
+                            boardName: pref.board_name,
+                            list: "  Unable to reach GitHub tracking data for this project right now."
+                        };
+                    }
+                })
             );
-            const releaseList = releases.map((r: any) => `• ${r.content?.title ?? "Untitled Issue"}`).join("\n");
+
+            let combinedMessage = `Here is your status breakdown across your saved preferences for the ${iterationLabel}:\n\n`;
+
+            const boardReports = multiReleaseResults.map((result) => {
+                const content = result.list || "  • No active releases found for this cycle.";
+                return `### ${result.boardName}\n${content}`;
+            }).join("\n\n");
 
             return res.json({
-                message: `Based on the active configuration for "${savedPreference.board_name}", the planned releases for the ${formatIterationLabel(resolvedIteration)} are:\n${releaseList || "• No active releases found."}`
+                message: combinedMessage + boardReports
             });
 
         } catch (error: any) {
             console.error("Pipeline Failure: ", error);
             if (error.message === "Request timed out") {
-                return res.status(504).json({ error: "Request timed out" });
+                return res.status(504).json({ error: "The request timed out while communicating with GitHub. Please check back in a moment." });
             }
-            return res.status(500).json({ error: "Internal server error" });
+            return res.status(500).json({ error: "Internal server error. Something went wrong processing that request." });
         }
     });
 
