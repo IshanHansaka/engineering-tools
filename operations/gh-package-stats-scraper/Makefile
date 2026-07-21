@@ -28,7 +28,9 @@ test: vet
 test-live:
 	RUN_LIVE=1 go test -race ./internal/github/ -run TestLiveScrape -v
 
-# Store integration test against a MySQL instance with migration 000008 applied.
+# Store integration test against a MySQL instance with migrations
+# 000001_add_package_snapshot_tables.sql and 000002_add_track_packages_flag.sql
+# applied (ActiveTrackedRepos queries the track_packages column from 000002).
 # DB_* come from .env (auto-loaded).
 test-db:
 	$(LOAD_ENV) RUN_DB=1 go test -race ./internal/store/ -run TestIntegrationRoundTrip -v
