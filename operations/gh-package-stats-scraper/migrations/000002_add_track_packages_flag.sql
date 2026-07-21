@@ -7,9 +7,11 @@
 -- mirroring how is_active gates the main sync.
 --
 -- NOTE: MySQL 8 has no "ADD COLUMN IF NOT EXISTS" — run this migration once.
--- The UPDATE seeds the flag for the three repos currently known to publish
--- GitHub container packages; flip it later with a plain UPDATE as repos start
--- or stop publishing packages.
+-- The UPDATE seeds the flag for wso2/agent-manager only — the sole repo the
+-- current classic PAT (read:packages, wso2 org) can scrape. openchoreo/
+-- openchoreo and thunder-id/thunderid also publish GitHub container packages
+-- but aren't seeded here yet; flip their flag with a plain UPDATE once the
+-- PAT (or a separate one) is authorized for those orgs.
 -- ============================================================================
 
 USE `github_statistics`;

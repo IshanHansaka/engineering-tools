@@ -16,7 +16,7 @@
 
 // Package store is the scraper's MySQL layer: it reads the shared
 // tracked_repositories table (the single source of truth for what to scrape)
-// and writes the package snapshot tables created by migration 000008.
+// and writes the package snapshot tables created by migration 000001.
 package store
 
 import (
@@ -110,7 +110,7 @@ func (s *Store) Close() error {
 }
 
 // ActiveTrackedRepos returns the repos the scraper should cover: active AND
-// explicitly opted in to package tracking (track_packages — migration 000009).
+// explicitly opted in to package tracking (track_packages — migration 000002).
 // Most tracked repos publish no GitHub packages, so scraping is opt-in.
 func (s *Store) ActiveTrackedRepos(ctx context.Context) ([]TrackedRepo, error) {
 	rows, err := s.db.QueryContext(ctx,
