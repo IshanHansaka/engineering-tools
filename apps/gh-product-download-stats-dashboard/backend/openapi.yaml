@@ -521,6 +521,140 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '500': { $ref: '#/components/responses/InternalServerError' }
+  /api/v1/stats/packages/repos:
+    get:
+      summary: Tracked repositories that have GitHub package data
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count: { type: integer }
+                  repos:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        repoId: { type: integer }
+                        repoName: { type: string }
+                        productName: { type: string, nullable: true }
+                        packageCount: { type: integer }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalServerError' }
+  /api/v1/stats/packages/{repoId}:
+    get:
+      summary: Per-package download figures for a repository over a date range
+      parameters:
+        - name: repoId
+          in: path
+          required: true
+          schema: { type: integer }
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  repoId: { type: integer }
+                  packages:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        packageName: { type: string }
+                        periodDownloads: { type: integer }
+                        totalDownloads: { type: integer }
+                        versionCount: { type: integer, nullable: true }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalServerError' }
+  /api/v1/stats/packages/{repoId}/series:
+    get:
+      summary: Per-package download series for a repository
+      parameters:
+        - name: repoId
+          in: path
+          required: true
+          schema: { type: integer }
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - $ref: '#/components/parameters/Interval'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  from: { type: string }
+                  to: { type: string }
+                  interval: { type: string, enum: [day, month, cumulative] }
+                  series:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        packageName: { type: string }
+                        points:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              date: { type: string }
+                              value: { type: integer }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalServerError' }
+  /api/v1/stats/packages/{repoId}/versions:
+    get:
+      summary: Per-version download figures for one package over a date range
+      parameters:
+        - name: repoId
+          in: path
+          required: true
+          schema: { type: integer }
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - name: package
+          in: query
+          required: true
+          schema: { type: string }
+          description: Package name (URL-encoded; may contain slashes)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  repoId: { type: integer }
+                  packageName: { type: string }
+                  versions:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        versionId: { type: integer }
+                        tags: { type: string, nullable: true }
+                        periodDownloads: { type: integer }
+                        totalDownloads: { type: integer }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalServerError' }
   /api/v1/admin/repositories:
     get:
       summary: List all tracked repositories incl. inactive (admin only)
