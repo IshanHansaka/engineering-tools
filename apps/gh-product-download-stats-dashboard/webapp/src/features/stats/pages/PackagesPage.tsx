@@ -172,10 +172,21 @@ export default function PackagesPage(): JSX.Element {
     [series, chartPackages],
   );
 
-  const periodTotal = packages.reduce((acc, p) => acc + p.periodDownloads, 0);
+  // "Cumulative" is a different metric from "Daily"/"Monthly": a running
+  // stock total (totalDownloads), not a period flow (periodDownloads). Day
+  // and month deliberately show the SAME number for a fixed date range —
+  // summing daily deltas over a range equals summing monthly deltas over the
+  // same range — so only cumulative needs a different source field, mirroring
+  // how DownloadsPage switches its whole data source (dailyQuery vs
+  // totalQuery) on the same toggle.
+  const isCumulative = filters.interval === "cumulative";
+  const downloadsOf = (item: { periodDownloads: number; totalDownloads: number }) =>
+    isCumulative ? item.totalDownloads : item.periodDownloads;
+
+  const periodTotal = packages.reduce((acc, p) => acc + downloadsOf(p), 0);
   const rows = packages.map((p) => ({
     ...p,
-    share: periodTotal > 0 ? (p.periodDownloads / periodTotal) * 100 : 0,
+    share: periodTotal > 0 ? (downloadsOf(p) / periodTotal) * 100 : 0,
   }));
 
   const versions = versionsQuery.data?.versions ?? [];
@@ -356,7 +367,11 @@ export default function PackagesPage(): JSX.Element {
                     <TableCell>Package</TableCell>
                     <TableCell align="right">
                       <Tooltip
-                        title="Downloads within the selected date range"
+                        title={
+                          isCumulative
+                            ? "All-time downloads, as of the latest sync"
+                            : "Downloads within the selected date range"
+                        }
                         placement="top"
                       >
                         <Box
@@ -393,7 +408,7 @@ export default function PackagesPage(): JSX.Element {
                     >
                       <TableCell>{p.packageName}</TableCell>
                       <TableCell align="right">
-                        {formatCompact(p.periodDownloads)}
+                        {formatCompact(downloadsOf(p))}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -460,7 +475,11 @@ export default function PackagesPage(): JSX.Element {
                     <TableCell>Tags</TableCell>
                     <TableCell align="right">
                       <Tooltip
-                        title="Downloads within the selected date range"
+                        title={
+                          isCumulative
+                            ? "All-time downloads, as of the latest sync"
+                            : "Downloads within the selected date range"
+                        }
                         placement="top"
                       >
                         <Box
@@ -490,7 +509,7 @@ export default function PackagesPage(): JSX.Element {
                         </Box>
                       </TableCell>
                       <TableCell align="right">
-                        {formatCompact(v.periodDownloads)}
+                        {formatCompact(downloadsOf(v))}
                       </TableCell>
                     </TableRow>
                   ))}
