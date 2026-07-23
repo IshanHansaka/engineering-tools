@@ -77,7 +77,7 @@ type VersionSnapshot struct {
 func New(cfg Config) (*Store, error) {
 	tlsMode := "false"
 	if cfg.TLSEnabled {
-		tlsMode = "skip-verify"
+		tlsMode = "true"
 	}
 	dsn := mysql.Config{
 		User:                 cfg.User,
